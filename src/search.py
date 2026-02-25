@@ -15,7 +15,10 @@ class RAGSearch:
         if not (os.path.exists(faiss_path) and os.path.exists(meta_path)):
             from src.data_loader import load_all_documents
             docs = load_all_documents("data")
-            self.vectorstore.build_from_documents(docs)
+            if not docs:
+                print("[WARN] No documents found in data directory. Vector store will remain empty.")
+            else:
+                self.vectorstore.build_from_documents(docs)
         else:
             self.vectorstore.load()
 
@@ -28,7 +31,7 @@ class RAGSearch:
         texts = [r["metadata"].get("text", "") for r in results if r["metadata"]]
         context = "\n\n".join(texts)
         if not context:
-            return "No relevant documents found."
+            return "No relevant documents found. Please ensure the data folder contains supported files and the vector index has been built."
         
         prompt = f"""Summarize the following context for the query: '{query}'\n\nContext:\n{context}\n\nSummary:"""
         

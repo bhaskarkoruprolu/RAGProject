@@ -19,10 +19,19 @@ class FaissVectorStore:
         print(f"[INFO] Loaded embedding model: {embedding_model}")
 
     def build_from_documents(self, documents: List[Any]):
+        if not documents:
+            print("[WARN] No documents provided to build_from_documents. Skipping index build.")
+            return
         print(f"[INFO] Building vector store from {len(documents)} raw documents...")
         emb_pipe = EmbeddingPipeline(model_name=self.embedding_model, chunk_size=self.chunk_size, chunk_overlap=self.chunk_overlap)
         chunks = emb_pipe.chunk_documents(documents)
+        if not chunks:
+            print("[WARN] Document chunking produced no chunks. Skipping index build.")
+            return
         embeddings = emb_pipe.embed_chunks(chunks)
+        if embeddings is None or len(embeddings) == 0:
+            print("[WARN] Embedding pipeline returned no embeddings. Skipping index build.")
+            return
         metadatas = [{"text": chunk.page_content} for chunk in chunks]
         self.add_embeddings(np.array(embeddings).astype('float32'), metadatas)
         self.save()
@@ -40,6 +49,9 @@ class FaissVectorStore:
     def save(self):
         faiss_path = os.path.join(self.persist_dir, "faiss.index")
         meta_path = os.path.join(self.persist_dir, "metadata.pkl")
+        if self.index is None or getattr(self.index, "ntotal", 0) == 0:
+            print("[WARN] Attempted to save an empty Faiss index. Skipping save.")
+            return
         faiss.write_index(self.index, faiss_path)
         with open(meta_path, "wb") as f:
             pickle.dump(self.metadata, f)
@@ -48,12 +60,25 @@ class FaissVectorStore:
     def load(self):
         faiss_path = os.path.join(self.persist_dir, "faiss.index")
         meta_path = os.path.join(self.persist_dir, "metadata.pkl")
-        self.index = faiss.read_index(faiss_path)
-        with open(meta_path, "rb") as f:
-            self.metadata = pickle.load(f)
-        print(f"[INFO] Loaded Faiss index and metadata from {self.persist_dir}")
+        if not (os.path.exists(faiss_path) and os.path.exists(meta_path)):
+            print("[WARN] Faiss index or metadata not found. Skipping load.")
+            self.index = None
+            self.metadata = []
+            return
+        try:
+            self.index = faiss.read_index(faiss_path)
+            with open(meta_path, "rb") as f:
+                self.metadata = pickle.load(f)
+            print(f"[INFO] Loaded Faiss index and metadata from {self.persist_dir}")
+        except Exception as e:
+            print(f"[ERROR] Failed to load Faiss index or metadata: {e}")
+            self.index = None
+            self.metadata = []
 
     def search(self, query_embedding: np.ndarray, top_k: int = 5):
+        if self.index is None or getattr(self.index, "ntotal", 0) == 0:
+            print("[WARN] Search requested but Faiss index is empty or not initialized.")
+            return []
         D, I = self.index.search(query_embedding, top_k)
         results = []
         for idx, dist in zip(I[0], D[0]):
@@ -68,7 +93,7 @@ class FaissVectorStore:
 
 # Example usage
 if __name__ == "__main__":
-    from data_loader import load_all_documents
+    from src.data_loader import load_all_documents
     docs = load_all_documents("data")
     store = FaissVectorStore("faiss_store")
     store.build_from_documents(docs)
